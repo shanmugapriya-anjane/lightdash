@@ -8,6 +8,7 @@
     ],
     "license": "MIT",
     "devDependencies": {
+        "@faker-js/faker": "^8.2.0",
         "@types/pegjs": "^0.10.3",
         "typescript-json-schema": "^0.54.0"
     },
