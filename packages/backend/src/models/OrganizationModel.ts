@@ -28,6 +28,8 @@ export class OrganizationModel {
             defaultProjectUuid: data.default_project_uuid
                 ? data.default_project_uuid
                 : undefined,
+            isCacheEnabled: true, // todo: read from db
+            cacheStateTimeSeconds: 86400, // todo: read from db
         };
     }
 

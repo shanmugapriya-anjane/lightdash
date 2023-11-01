@@ -34,6 +34,7 @@ import AppearancePanel from '../components/UserSettings/AppearancePanel';
 import DefaultProjectPanel from '../components/UserSettings/DefaultProjectPanel';
 import { DeleteOrganizationPanel } from '../components/UserSettings/DeleteOrganizationPanel';
 import { Description } from '../components/UserSettings/DeleteOrganizationPanel/DeleteOrganizationPanel.styles';
+import OrganizationCachePanel from '../components/UserSettings/OrganizationCachePanel';
 import OrganizationPanel from '../components/UserSettings/OrganizationPanel';
 import PasswordPanel from '../components/UserSettings/PasswordPanel';
 import ProfilePanel from '../components/UserSettings/ProfilePanel';
@@ -422,6 +423,28 @@ const Settings: FC = () => {
                                     </Description>
                                 </div>
                                 <DefaultProjectPanel />
+                            </SettingsGridCard>
+
+                            <SettingsGridCard>
+                                <div>
+                                    <Title order={4}>Caching</Title>
+                                    <Description>
+                                        Caching is set at the chart level. When
+                                        caching is enabled, the results of any
+                                        chart will be cached in a Lightdash S3
+                                        bucket. If that same exact query is then
+                                        executed again within the set period,
+                                        instead of executing the query in your
+                                        database, the data will be fetched from
+                                        the cache. This results in a much faster
+                                        fetch of the data. Once the stale period
+                                        has passed, the data in the cache will
+                                        expire and, if that query is executed
+                                        again, your database will be queried for
+                                        the results.
+                                    </Description>
+                                </div>
+                                <OrganizationCachePanel />
                             </SettingsGridCard>
 
                             {user.ability?.can('delete', 'Organization') && (

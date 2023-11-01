@@ -28,6 +28,14 @@ export type Organization = {
      * The project a user sees when they first log in to the organization
      */
     defaultProjectUuid?: string;
+    /**
+     * Determines if Lightdash can cache results for this organization
+     */
+    isCacheEnabled: boolean;
+    /**
+     * When is the cache considered stale
+     */
+    cacheStateTimeSeconds: number;
 };
 
 export type CreateOrganization = Pick<Organization, 'name'>;
