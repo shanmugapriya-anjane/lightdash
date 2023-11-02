@@ -28,6 +28,7 @@ import { SshKeyPairModel } from './SshKeyPairModel';
 import { UserAttributesModel } from './UserAttributesModel';
 import { UserModel } from './UserModel';
 import { ValidationModel } from './ValidationModel/ValidationModel';
+import { WarehouseModel } from './WarehouseModel/WarehouseModel';
 
 export const encryptionService = new EncryptionService({ lightdashConfig });
 
@@ -98,3 +99,8 @@ export const sshKeyPairModel = new SshKeyPairModel({
 });
 
 export const userAttributesModel = new UserAttributesModel({ database });
+
+export const warehouseModel = new WarehouseModel({
+    database,
+    encryptionService,
+});

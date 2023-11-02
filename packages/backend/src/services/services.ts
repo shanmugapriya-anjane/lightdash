@@ -27,6 +27,7 @@ import {
     userAttributesModel,
     userModel,
     validationModel,
+    warehouseModel,
 } from '../models/models';
 import { AnalyticsService } from './AnalyticsService/AnalyticsService';
 import { CsvService } from './CsvService/CsvService';
@@ -86,6 +87,7 @@ export const projectService = new ProjectService({
     sshKeyPairModel,
     userAttributesModel,
     s3CacheClient,
+    warehouseModel,
 });
 
 export const shareService = new ShareService({

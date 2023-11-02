@@ -19,9 +19,7 @@ import {
     DashboardAvailableFilters,
     DashboardBasicDetails,
     DbtProjectType,
-    deepEqual,
     DefaultSupportedDbtVersion,
-    DimensionType,
     Explore,
     ExploreError,
     fieldId as getFieldId,
@@ -75,14 +73,11 @@ import {
 import { SshTunnel } from '@lightdash/warehouses';
 import opentelemetry, { SpanStatusCode } from '@opentelemetry/api';
 import * as Sentry from '@sentry/node';
-import * as crypto from 'crypto';
 import { URL } from 'url';
 import { v4 as uuidv4 } from 'uuid';
 import { Worker } from 'worker_threads';
 import { analytics } from '../../analytics/client';
 import { QueryExecutionContext } from '../../analytics/LightdashAnalytics';
-import { S3Client } from '../../clients/Aws/s3';
-import { S3CacheClient } from '../../clients/Aws/S3CacheClient';
 import { schedulerClient } from '../../clients/clients';
 import EmailClient from '../../clients/EmailClient/EmailClient';
 import { lightdashConfig } from '../../config/lightdashConfig';
@@ -95,6 +90,10 @@ import { SavedChartModel } from '../../models/SavedChartModel';
 import { SpaceModel } from '../../models/SpaceModel';
 import { SshKeyPairModel } from '../../models/SshKeyPairModel';
 import { UserAttributesModel } from '../../models/UserAttributesModel';
+import {
+    RunQueryTags,
+    WarehouseModel,
+} from '../../models/WarehouseModel/WarehouseModel';
 import { projectAdapterFromConfig } from '../../projectAdapters/projectAdapter';
 import { buildQuery } from '../../queryBuilder';
 import { compileMetricQuery } from '../../queryCompiler';
@@ -110,13 +109,6 @@ import {
     filterDimensionsFromExplore,
 } from '../UserAttributesService/UserAttributeUtils';
 
-type RunQueryTags = {
-    project_uuid?: string;
-    user_uuid?: string;
-    organization_uuid?: string;
-    chart_uuid?: string;
-};
-
 type ProjectServiceDependencies = {
     projectModel: ProjectModel;
     onboardingModel: OnboardingModel;
@@ -126,15 +118,13 @@ type ProjectServiceDependencies = {
     spaceModel: SpaceModel;
     sshKeyPairModel: SshKeyPairModel;
     userAttributesModel: UserAttributesModel;
-    s3CacheClient: S3CacheClient;
+    warehouseModel: WarehouseModel;
 };
 
 export class ProjectService {
     projectModel: ProjectModel;
 
     onboardingModel: OnboardingModel;
-
-    warehouseClients: Record<string, WarehouseClient>;
 
     savedChartModel: SavedChartModel;
 
@@ -148,7 +138,7 @@ export class ProjectService {
 
     userAttributesModel: UserAttributesModel;
 
-    s3CacheClient: S3CacheClient;
+    warehouseModel: WarehouseModel;
 
     constructor({
         projectModel,
@@ -159,18 +149,17 @@ export class ProjectService {
         spaceModel,
         sshKeyPairModel,
         userAttributesModel,
-        s3CacheClient,
+        warehouseModel,
     }: ProjectServiceDependencies) {
         this.projectModel = projectModel;
         this.onboardingModel = onboardingModel;
-        this.warehouseClients = {};
         this.savedChartModel = savedChartModel;
         this.jobModel = jobModel;
         this.emailClient = emailClient;
         this.spaceModel = spaceModel;
         this.sshKeyPairModel = sshKeyPairModel;
         this.userAttributesModel = userAttributesModel;
-        this.s3CacheClient = s3CacheClient;
+        this.warehouseModel = warehouseModel;
     }
 
     private async _resolveWarehouseClientSshKeys<
@@ -192,38 +181,6 @@ export class ProjectService {
             };
         }
         return args;
-    }
-
-    private async _getWarehouseClient(projectUuid: string): Promise<{
-        warehouseClient: WarehouseClient;
-        sshTunnel: SshTunnel<CreateWarehouseCredentials>;
-    }> {
-        // Always load the latest credentials from the database
-        const credentials =
-            await this.projectModel.getWarehouseCredentialsForProject(
-                projectUuid,
-            );
-        // Setup SSH tunnel for client (user needs to close this)
-        const sshTunnel = new SshTunnel(credentials);
-        const warehouseSshCredentials = await sshTunnel.connect();
-
-        // Check cache for existing client (always false if ssh tunnel was connected)
-        const existingClient = this.warehouseClients[projectUuid] as
-            | typeof this.warehouseClients[string]
-            | undefined;
-        if (
-            existingClient &&
-            deepEqual(existingClient.credentials, warehouseSshCredentials)
-        ) {
-            // if existing client uses identical credentials, use it
-            return { warehouseClient: existingClient, sshTunnel };
-        }
-        // otherwise create a new client and cache for future use
-        const client = this.projectModel.getWarehouseClientFromCredentials(
-            warehouseSshCredentials,
-        );
-        this.warehouseClients[projectUuid] = client;
-        return { warehouseClient: client, sshTunnel };
     }
 
     async getProject(projectUuid: string, user: SessionUser): Promise<Project> {
@@ -753,22 +710,15 @@ export class ProjectService {
         ) {
             throw new ForbiddenError();
         }
-        const { warehouseClient, sshTunnel } = await this._getWarehouseClient(
-            projectUuid,
-        );
         const explore = await this.getExplore(user, projectUuid, exploreName);
-        const userAttributes =
-            await this.userAttributesModel.getAttributeValuesForOrgMember({
-                organizationUuid,
-                userUuid: user.userUuid,
-            });
-        const compiledQuery = await ProjectService._compileQuery(
+
+        const compiledQuery = await this.warehouseModel.compileMetricQuery({
+            organizationUuid,
+            projectUuid,
+            userUuid: user.userUuid,
             metricQuery,
             explore,
-            warehouseClient,
-            userAttributes,
-        );
-        await sshTunnel.disconnect();
+        });
         return compiledQuery;
     }
 
@@ -1062,107 +1012,6 @@ export class ProjectService {
         );
     }
 
-    private async getResultsFromCacheOrWarehouse({
-        projectUuid,
-        context,
-        warehouseClient,
-        query,
-        metricQuery,
-        queryTags,
-    }: {
-        projectUuid: string;
-        context: QueryExecutionContext;
-        warehouseClient: WarehouseClient;
-        query: any;
-        metricQuery: MetricQuery;
-        queryTags?: RunQueryTags;
-    }): Promise<{
-        rows: Record<string, any>[];
-        cacheMetadata: CacheMetadata;
-    }> {
-        return wrapOtelSpan(
-            'ProjectService.getResultsFromCacheOrWarehouse',
-            {},
-            async (span) => {
-                // TODO: put this hash function in a util somewhere
-                const queryHash = crypto
-                    .createHash('sha256')
-                    .update(`${projectUuid}.${query}`)
-                    .digest('hex');
-
-                span.setAttribute('queryHash', queryHash);
-                span.setAttribute('cacheHit', false);
-
-                if (lightdashConfig.resultsCache?.enabled) {
-                    const cacheEntryMetadata = await this.s3CacheClient
-                        .getResultsMetadata(queryHash)
-                        .catch((e) => undefined); // ignore since error is tracked in s3Client
-
-                    if (
-                        cacheEntryMetadata?.LastModified &&
-                        new Date().getTime() -
-                            cacheEntryMetadata.LastModified.getTime() <
-                            lightdashConfig.resultsCache.cacheStateTimeSeconds *
-                                1000
-                    ) {
-                        Logger.debug(
-                            `Getting data from cache, key: ${queryHash}`,
-                        );
-                        const cacheEntry = await this.s3CacheClient.getResults(
-                            queryHash,
-                        );
-                        const stringResults =
-                            await cacheEntry.Body?.transformToString();
-                        if (stringResults) {
-                            try {
-                                span.setAttribute('cacheHit', true);
-                                return {
-                                    rows: JSON.parse(stringResults).rows,
-                                    cacheMetadata: {
-                                        cacheHit: true,
-                                        cacheUpdatedTime:
-                                            cacheEntryMetadata?.LastModified,
-                                    },
-                                };
-                            } catch (e) {
-                                Logger.error('Error parsing cache results:', e);
-                            }
-                        }
-                    }
-                }
-
-                Logger.debug(`Run query against warehouse warehouse`);
-                const warehouseResults = await wrapOtelSpan(
-                    'runWarehouseQuery',
-                    {
-                        query,
-                        queryTags: JSON.stringify(queryTags),
-                        context,
-                        metricQuery: JSON.stringify(metricQuery),
-                        type: warehouseClient.credentials.type,
-                    },
-                    async () => warehouseClient.runQuery(query, queryTags),
-                );
-
-                if (lightdashConfig.resultsCache?.enabled) {
-                    Logger.debug(`Writing data to cache with key ${queryHash}`);
-                    const buffer = Buffer.from(
-                        JSON.stringify(warehouseResults),
-                    );
-                    // fire and forget
-                    this.s3CacheClient
-                        .uploadResults(queryHash, buffer, queryTags)
-                        .catch((e) => undefined); // ignore since error is tracked in s3Client
-                }
-
-                return {
-                    rows: warehouseResults.rows,
-                    cacheMetadata: { cacheHit: false },
-                };
-            },
-        );
-    }
-
     async runMetricQuery(
         user: SessionUser,
         metricQuery: MetricQuery,
@@ -1204,29 +1053,11 @@ export class ProjectService {
                             csvLimit,
                         );
 
-                    const { warehouseClient, sshTunnel } =
-                        await this._getWarehouseClient(projectUuid);
-
                     const explore = await this.getExplore(
                         user,
                         projectUuid,
                         exploreName,
                     );
-                    const userAttributes =
-                        await this.userAttributesModel.getAttributeValuesForOrgMember(
-                            {
-                                organizationUuid,
-                                userUuid: user.userUuid,
-                            },
-                        );
-
-                    const { query, hasExampleMetric } =
-                        await ProjectService._compileQuery(
-                            metricQueryWithLimit,
-                            explore,
-                            warehouseClient,
-                            userAttributes,
-                        );
 
                     const onboardingRecord =
                         await this.onboardingModel.getByOrganizationUuid(
@@ -1241,7 +1072,26 @@ export class ProjectService {
                         );
                     }
 
-                    await analytics.track({
+                    Logger.debug(`Fetch query results from cache or warehouse`);
+                    const {
+                        rows,
+                        cacheMetadata,
+                        warehouseType,
+                        query,
+                        hasExampleMetric,
+                    } = await this.warehouseModel.runMetricQuery({
+                        organizationUuid,
+                        projectUuid,
+                        userUuid: user.userUuid,
+                        metricQuery: metricQueryWithLimit,
+                        explore,
+                        queryTags,
+                    });
+                    span.setAttribute('generatedSql', query);
+                    span.setAttribute('lightdash.projectUuid', projectUuid);
+                    span.setAttribute('warehouse.type', warehouseType);
+
+                    analytics.track({
                         userId: user.userUuid,
                         event: 'query.executed',
                         properties: {
@@ -1295,24 +1145,6 @@ export class ProjectService {
                         },
                     });
 
-                    Logger.debug(`Fetch query results from cache or warehouse`);
-                    span.setAttribute('generatedSql', query);
-                    span.setAttribute('lightdash.projectUuid', projectUuid);
-                    span.setAttribute(
-                        'warehouse.type',
-                        warehouseClient.credentials.type,
-                    );
-
-                    const { rows, cacheMetadata } =
-                        await this.getResultsFromCacheOrWarehouse({
-                            projectUuid,
-                            context,
-                            warehouseClient,
-                            metricQuery,
-                            query,
-                            queryTags,
-                        });
-                    await sshTunnel.disconnect();
                     return { rows, cacheMetadata };
                 } catch (e) {
                     span.setStatus({
@@ -1352,17 +1184,17 @@ export class ProjectService {
                 projectId: projectUuid,
             },
         });
-        const { warehouseClient, sshTunnel } = await this._getWarehouseClient(
-            projectUuid,
-        );
         Logger.debug(`Run query against warehouse`);
         const queryTags: RunQueryTags = {
             organization_uuid: organizationUuid,
             user_uuid: user.userUuid,
         };
-        const results = await warehouseClient.runQuery(sql, queryTags);
-        await sshTunnel.disconnect();
-        return results;
+
+        return this.warehouseModel.runQuery({
+            projectUuid,
+            query: sql,
+            queryTags,
+        });
     }
 
     async searchFieldUniqueValues(
@@ -1449,29 +1281,21 @@ export class ProjectService {
             limit,
         };
 
-        const { warehouseClient, sshTunnel } = await this._getWarehouseClient(
-            projectUuid,
-        );
-        const userAttributes =
-            await this.userAttributesModel.getAttributeValuesForOrgMember({
-                organizationUuid,
-                userUuid: user.userUuid,
-            });
-        const { query } = await ProjectService._compileQuery(
-            metricQuery,
-            explore,
-            warehouseClient,
-            userAttributes,
-        );
-
         Logger.debug(`Run query against warehouse`);
         const queryTags: RunQueryTags = {
             organization_uuid: organizationUuid,
             user_uuid: user.userUuid,
             project_uuid: projectUuid,
         };
-        const { rows } = await warehouseClient.runQuery(query, queryTags);
-        await sshTunnel.disconnect();
+
+        const { rows } = await this.warehouseModel.runMetricQuery({
+            organizationUuid,
+            projectUuid,
+            userUuid: user.userUuid,
+            queryTags,
+            metricQuery,
+            explore,
+        });
 
         analytics.track({
             event: 'field_value.search',
