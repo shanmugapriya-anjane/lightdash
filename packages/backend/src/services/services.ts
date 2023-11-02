@@ -1,4 +1,4 @@
-import { emailClient, s3CacheClient, s3Client } from '../clients/clients';
+import { emailClient, s3Client } from '../clients/clients';
 import { lightdashConfig } from '../config/lightdashConfig';
 import {
     analyticsModel,
@@ -86,7 +86,6 @@ export const projectService = new ProjectService({
     spaceModel,
     sshKeyPairModel,
     userAttributesModel,
-    s3CacheClient,
     warehouseModel,
 });
 

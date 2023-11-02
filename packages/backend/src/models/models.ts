@@ -1,3 +1,4 @@
+import { S3CacheClient } from '../clients/Aws/S3CacheClient';
 import { lightdashConfig } from '../config/lightdashConfig';
 import database from '../database/database';
 import { EncryptionService } from '../services/EncryptionService/EncryptionService';
@@ -102,5 +103,9 @@ export const userAttributesModel = new UserAttributesModel({ database });
 
 export const warehouseModel = new WarehouseModel({
     database,
+    s3CacheClient: new S3CacheClient({
+        // to avoid circle dependency since /clients file imports models
+        lightdashConfig,
+    }),
     encryptionService,
 });
