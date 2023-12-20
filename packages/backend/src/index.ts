@@ -17,6 +17,7 @@ import passport from 'passport';
 import refresh from 'passport-oauth2-refresh';
 import path from 'path';
 import reDoc from 'redoc-express';
+import helmet from 'helmet';
 import apiSpec from './generated/swagger.json';
 import { analytics } from './analytics/client';
 import { LightdashAnalytics } from './analytics/LightdashAnalytics';
@@ -141,7 +142,7 @@ app.use(passport.initialize());
 app.use(passport.session());
 
 app.use(expressWinstonMiddleware);
-
+app.use(helmet());
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, '../../frontend/build', 'index.html'), {
         headers: { 'Cache-Control': 'no-cache, private' },
