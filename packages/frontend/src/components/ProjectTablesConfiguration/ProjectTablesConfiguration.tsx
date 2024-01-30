@@ -5,6 +5,7 @@ import {
     Box,
     Button,
     Collapse,
+    Flex,
     MultiSelect,
     Radio,
     ScrollArea,
@@ -13,7 +14,7 @@ import {
     Title,
 } from '@mantine/core';
 import { useForm } from '@mantine/form';
-import { FC, useEffect, useMemo } from 'react';
+import { FC, useCallback, useEffect, useMemo } from 'react';
 import { useToggle } from 'react-use';
 import { useExplores } from '../../hooks/useExplores';
 import {
@@ -135,6 +136,45 @@ const ProjectTablesConfiguration: FC<{
             onSuccess();
         }
     }, [isSuccess, onSuccess]);
+
+    const setFormValuesFromData = useCallback(() => {
+        if (data) {
+            form.setValues({
+                type: data.tableSelection.type,
+                tags:
+                    data.tableSelection.type === TableSelectionType.WITH_TAGS &&
+                    data.tableSelection.value
+                        ? data.tableSelection.value
+                        : [],
+                names:
+                    data.tableSelection.type ===
+                        TableSelectionType.WITH_NAMES &&
+                    data.tableSelection.value
+                        ? data.tableSelection.value
+                        : [],
+            });
+
+            form.resetDirty({
+                type: data.tableSelection.type,
+                tags:
+                    data.tableSelection.type === TableSelectionType.WITH_TAGS &&
+                    data.tableSelection.value
+                        ? data.tableSelection.value
+                        : [],
+                names:
+                    data.tableSelection.type ===
+                        TableSelectionType.WITH_NAMES &&
+                    data.tableSelection.value
+                        ? data.tableSelection.value
+                        : [],
+            });
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [data]);
+
+    useEffect(() => {
+        setFormValuesFromData();
+    }, [setFormValuesFromData]);
 
     const handleSubmit = form.onSubmit(async (formData: FormData) => {
         track({
@@ -272,15 +312,28 @@ const ProjectTablesConfiguration: FC<{
                     </Radio.Group>
 
                     {canUpdateTableConfiguration && (
-                        <Button
-                            mt={'xl'}
-                            type="submit"
-                            loading={isSaving}
-                            disabled={disabled}
-                            sx={{ float: 'right' }}
-                        >
-                            Save changes
-                        </Button>
+                        <Flex justify="flex-end" gap="sm">
+                            {form.isDirty() && (
+                                <Button
+                                    mt={'xl'}
+                                    variant="outline"
+                                    onClick={() => {
+                                        setFormValuesFromData();
+                                    }}
+                                >
+                                    Cancel
+                                </Button>
+                            )}
+                            <Button
+                                mt={'xl'}
+                                type="submit"
+                                loading={isSaving}
+                                disabled={disabled || !form.isDirty()}
+                                sx={{ float: 'right' }}
+                            >
+                                Save changes
+                            </Button>
+                        </Flex>
                     )}
                 </div>
             </SettingsGridCard>
