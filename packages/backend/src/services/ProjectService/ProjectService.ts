@@ -1687,7 +1687,7 @@ export class ProjectService {
                 if (lightdashConfig.resultsCache?.enabled) {
                     Logger.debug(`Writing data to cache with key ${queryHash}`);
                     const buffer = Buffer.from(
-                        JSON.stringify(warehouseResults),
+                        JSON.stringify(warehouseRowsWithTableCalculations),
                     );
                     // fire and forget
                     this.s3CacheClient
