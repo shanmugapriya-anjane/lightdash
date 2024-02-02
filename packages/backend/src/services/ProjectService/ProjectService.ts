@@ -36,6 +36,7 @@ import {
     ExploreError,
     fieldId as getFieldId,
     FilterableField,
+    FilterGroup,
     FilterGroupItem,
     FilterOperator,
     findFieldByIdInExplore,
@@ -45,6 +46,7 @@ import {
     getDateDimension,
     getDimensions,
     getFields,
+    getFilterRulesFromGroup,
     getItemId,
     getMetrics,
     hasIntersection,
@@ -70,6 +72,7 @@ import {
     ProjectMemberProfile,
     ProjectMemberRole,
     ProjectType,
+    renderTableCalculationFilterRuleSql,
     replaceDimensionInExplore,
     RequestMethod,
     ResultRow,
@@ -892,10 +895,10 @@ export class ProjectService {
 
     /**
      * Based on _compileQuery, this -temporary- method handles isolating and generating
-     * a separate query for table calculations.
+     * a separate query for table calculations on DuckDB.
      *
-     * Once the feature is proven and ready to be rolled out, _compileQuery will be
-     * expanded to support this behavior natively.
+     * Once the feature is proven and ready to be rolled out, _compileQuery and the query builder
+     * will be expanded to support this behavior natively.
      */
     private static async _compileMetricQueryWithNewTableCalculationsEngine(
         metricQuery: MetricQuery,
@@ -914,7 +917,6 @@ export class ProjectService {
         const {
             compiledMetricQueryWithoutTableCalculations,
             compiledTableCalculations,
-            tableCalculations,
             tableCalculationFilters,
         } = ProjectService.isolateTableCalculationsFromCompiledMetricsQuery(
             compileMetricQuery({
@@ -931,6 +933,10 @@ export class ProjectService {
             userAttributes,
         });
 
+        /**
+         * Generate a new SELECT statement with all of our original columns, as well as
+         * table calculation columns/aggregates:
+         */
         const selectFrom = [
             '*',
             ...compiledTableCalculations.map(
@@ -938,9 +944,67 @@ export class ProjectService {
             ),
         ];
 
+        /**
+         * Render table calculation filter rules for compatibility with DuckDB.
+         */
+        const filterRules = getFilterRulesFromGroup(
+            tableCalculationFilters as FilterGroup,
+        );
+
+        const renderedFilters = filterRules.map((filterRule) => {
+            const field = compiledTableCalculations.find(
+                ({ name }) =>
+                    `table_calculation_${name}` === filterRule.target.fieldId,
+            );
+
+            /**
+             * If a matching field cannot be found, we insert a placeholder expression.
+             */
+            if (!field) {
+                return '1=1';
+            }
+
+            return renderTableCalculationFilterRuleSql(
+                filterRule,
+                field,
+                '"',
+                "'",
+                '\\',
+            );
+        });
+
+        const whereClause =
+            renderedFilters.length > 0
+                ? `WHERE ${renderedFilters.join('\nAND ')}`
+                : '';
+
+        const sorts = compiledMetricQueryWithoutTableCalculations.sorts.map(
+            ({ descending, fieldId }) =>
+                `${fieldId} ${descending ? 'DESC' : 'ASC'}`,
+        );
+
+        const orderByClause =
+            sorts.length > 0 ? `ORDER BY ${sorts.join(', ')}` : '';
+
+        const subQuery = `
+            WITH results AS 
+            (
+                SELECT ${selectFrom.join(',\n')}
+                FROM _
+                GROUP BY ${Object.keys(primaryQuery.fields)
+                    .map((_, i) => i + 1)
+                    .join(',')}
+            )
+
+            SELECT * FROM results
+            ${whereClause}
+            ${orderByClause}
+            ;
+    `;
+
         const tableCalculationsSubQuery: CompiledQuery = {
             fields: {},
-            query: `SELECT ${selectFrom.join(',\n')}\n FROM _parent_results_;`,
+            query: subQuery,
             hasExampleMetric: false,
         };
 
@@ -1613,7 +1677,7 @@ export class ProjectService {
                     ? await runQueryInMemoryDatabaseContext({
                           query: tableCalculationsSubQuery.query,
                           tables: {
-                              _parent_results_: warehouseResults.rows,
+                              _: warehouseResults.rows,
                           },
                       })
                     : warehouseResults.rows;
@@ -1675,8 +1739,15 @@ export class ProjectService {
                         );
                     }
 
-                    const useNewTableCalculationsEngine =
-                        true ??
+                    /**
+                     * If the feature flag is enabled, and we actually have any table calculations
+                     * to process, we use the new in-memory table calculations engine. This avoid us
+                     * spinning-up a new DuckDB database pointlessly.
+                     *
+                     * In a follow-up after initial testing, this check should be done somewhere further
+                     * down the stack.
+                     */
+                    const newTableCalculationsFeatureFlagEnabled =
                         (await postHogClient?.isFeatureEnabled(
                             'new-table-calculations-engine',
                             user.userUuid,
@@ -1687,8 +1758,11 @@ export class ProjectService {
                                       },
                                   }
                                 : {},
-                        )) ??
-                        false;
+                        )) ?? false;
+
+                    const useNewTableCalculationsEngine =
+                        newTableCalculationsFeatureFlagEnabled &&
+                        metricQuery.tableCalculations.length > 0;
 
                     const { organizationUuid } =
                         await this.projectModel.getSummary(projectUuid);
@@ -1733,6 +1807,10 @@ export class ProjectService {
                             },
                         );
 
+                    /**
+                     * Note: most of this is temporary while testing out in-memory table calculations,
+                     * so that we can more cleanly handle the feature-flagged behavior fork below.
+                     */
                     let fields: ItemsMap;
                     let query: string;
                     let hasExampleMetric: boolean;
