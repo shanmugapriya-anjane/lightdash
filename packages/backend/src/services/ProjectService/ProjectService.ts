@@ -912,7 +912,7 @@ export class ProjectService {
         );
 
         const {
-            compiledMetricQuery,
+            compiledMetricQueryWithoutTableCalculations,
             compiledTableCalculations,
             tableCalculations,
             tableCalculationFilters,
@@ -926,7 +926,7 @@ export class ProjectService {
 
         const primaryQuery = buildQuery({
             explore: exploreWithOverride,
-            compiledMetricQuery,
+            compiledMetricQuery: compiledMetricQueryWithoutTableCalculations,
             warehouseClient,
             userAttributes,
         });
@@ -987,8 +987,8 @@ export class ProjectService {
     private static isolateTableCalculationsFromCompiledMetricsQuery(
         compiledMetricQuery: CompiledMetricQuery,
     ): {
-        originalMetricQuery: CompiledMetricQuery;
         compiledMetricQuery: CompiledMetricQuery;
+        compiledMetricQueryWithoutTableCalculations: CompiledMetricQuery;
         tableCalculationFilters?: FilterGroupItem;
         tableCalculations: TableCalculation[];
         compiledTableCalculations: CompiledTableCalculation[];
@@ -1001,8 +1001,8 @@ export class ProjectService {
         } = compiledMetricQuery;
 
         return {
-            originalMetricQuery: compiledMetricQuery,
-            compiledMetricQuery: {
+            compiledMetricQuery,
+            compiledMetricQueryWithoutTableCalculations: {
                 ...otherProps,
                 tableCalculations: [],
                 compiledTableCalculations: [],
