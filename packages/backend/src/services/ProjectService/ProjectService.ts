@@ -926,13 +926,6 @@ export class ProjectService {
             }),
         );
 
-        const primaryQuery = buildQuery({
-            explore: exploreWithOverride,
-            compiledMetricQuery: compiledMetricQueryWithoutTableCalculations,
-            warehouseClient,
-            userAttributes,
-        });
-
         /**
          * Generate a new SELECT statement with all of our original columns, as well as
          * table calculation columns/aggregates:
@@ -986,25 +979,28 @@ export class ProjectService {
         const orderByClause =
             sorts.length > 0 ? `ORDER BY ${sorts.join(', ')}` : '';
 
-        const subQuery = `
-            WITH results AS 
-            (
-                SELECT ${selectFrom.join(',\n')}
-                FROM _
-                GROUP BY ${Object.keys(primaryQuery.fields)
-                    .map((_, i) => i + 1)
-                    .join(',')}
-            )
-
-            SELECT * FROM results
-            ${whereClause}
-            ${orderByClause}
-            ;
-    `;
+        const primaryQuery = buildQuery({
+            explore: exploreWithOverride,
+            compiledMetricQuery: compiledMetricQueryWithoutTableCalculations,
+            warehouseClient,
+            userAttributes,
+        });
 
         const tableCalculationsSubQuery: CompiledQuery = {
             fields: {},
-            query: subQuery,
+            query: `
+                WITH results AS (
+                    SELECT ${selectFrom.join(',\n')}
+                    FROM _
+                    GROUP BY ${Object.keys(primaryQuery.fields)
+                        .map((_, i) => i + 1)
+                        .join(',')}
+                )
+
+                SELECT * FROM results
+                ${whereClause}
+                ${orderByClause}
+            ;`,
             hasExampleMetric: false,
         };
 
@@ -1673,14 +1669,20 @@ export class ProjectService {
                     async () => warehouseClient.runQuery(query, queryTags),
                 );
 
-                const mergedResults = tableCalculationsSubQuery
-                    ? await runQueryInMemoryDatabaseContext({
-                          query: tableCalculationsSubQuery.query,
-                          tables: {
-                              _: warehouseResults.rows,
-                          },
-                      })
-                    : warehouseResults.rows;
+                /**
+                 * If we have a table calculations sub-query, we run it against the in-memory
+                 * database, essentially generating a new result set based on the upstream
+                 * warehouse results.
+                 */
+                const warehouseRowsWithTableCalculations =
+                    tableCalculationsSubQuery
+                        ? await runQueryInMemoryDatabaseContext({
+                              query: tableCalculationsSubQuery.query,
+                              tables: {
+                                  _: warehouseResults.rows,
+                              },
+                          })
+                        : warehouseResults.rows;
 
                 if (lightdashConfig.resultsCache?.enabled) {
                     Logger.debug(`Writing data to cache with key ${queryHash}`);
@@ -1694,7 +1696,7 @@ export class ProjectService {
                 }
 
                 return {
-                    rows: mergedResults,
+                    rows: warehouseRowsWithTableCalculations,
                     cacheMetadata: { cacheHit: false },
                 };
             },
