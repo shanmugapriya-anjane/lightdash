@@ -31,7 +31,7 @@ import { SettingsGridCard } from '../components/common/Settings/SettingsCard';
 import PageSpinner from '../components/PageSpinner';
 import AccessTokensPanel from '../components/UserSettings/AccessTokensPanel';
 import AllowedDomainsPanel from '../components/UserSettings/AllowedDomainsPanel';
-import AppearancePanel from '../components/UserSettings/AppearancePanel';
+import AppearanceSettingsPanel from '../components/UserSettings/AppearanceSettingsPanel';
 import DefaultProjectPanel from '../components/UserSettings/DefaultProjectPanel';
 import { DeleteOrganizationPanel } from '../components/UserSettings/DeleteOrganizationPanel';
 import { MyWarehouseConnectionsPanel } from '../components/UserSettings/MyWarehouseConnectionsPanel';
@@ -527,10 +527,7 @@ const Settings: FC = () => {
                     )}
 
                 <Route exact path="/generalSettings/appearance">
-                    <SettingsGridCard>
-                        <Title order={4}>Appearance settings</Title>
-                        <AppearancePanel />
-                    </SettingsGridCard>
+                    <AppearanceSettingsPanel />
                 </Route>
 
                 <Route exact path="/generalSettings/personalAccessTokens">
